@@ -1,0 +1,95 @@
+#!/usr/bin/env ruby
+# -*- mode: ruby -*-
+
+require 'pathname'
+require 'rubygems'
+require 'bundler/setup'
+require 'sqlite3'
+
+class Index
+  def initialize(path)
+    @conn = SQLite3::Database.new(path.to_s)
+    @conn.transaction
+    create_tables
+  end
+
+  def create_tables
+    @conn.execute_batch <<-SQL
+      CREATE TABLE IF NOT EXISTS images (
+        path STRING UNIQUE
+      );
+    SQL
+  end
+
+  def get(path)
+    id = @conn.get_first_value <<-SQL, path: path.to_s
+      SELECT ROWID FROM images WHERE path = :path
+    SQL
+
+    return id if id
+
+    @conn.execute <<-SQL, path: path.to_s
+      INSERT INTO images (path) VALUES (:path)
+    SQL
+    return @conn.get_first_value <<-SQL
+      SELECT last_insert_rowid()
+    SQL
+  end
+
+  def close
+    @conn.commit
+    @conn.close
+  end
+
+  def self.open(path)
+    index = new(path)
+    begin
+      yield index
+    ensure
+      index.close
+    end
+  end
+end
+
+def crawl(source_dir, target_dir)
+  source_dir = Pathname.new(source_dir)
+  target_dir = Pathname.new(target_dir)
+  target_dir.mkpath
+
+  Index.open(target_dir + 'index.sqlite3') do |index|
+    queue = [source_dir]
+    visited = []
+    while source_dir = queue.pop
+      puts "Crawling `#{source_dir}'"
+      source_dir.each_child do |source|
+        next if source.symlink?
+        if source.directory? and source.basename.to_s !~ /\A\./
+          stat = source.stat
+          node = [stat.dev, stat.ino]
+          unless visited.include?(node)
+            puts "Directory `#{source}' found"
+            visited << node
+            queue << source
+          end
+        elsif source.file? and source.extname.downcase == '.jpg'
+          id = index.get(source)
+          target = target_dir + "#{id.to_s.rjust(8, '0')}.jpg"
+          unless target.exist?
+            puts "File `#{source}' found"
+            target.make_symlink(source)
+          else
+            putc '.'
+          end
+        end
+      end
+    end
+  end
+
+end
+
+if ARGV.length >= 2
+  crawl(ARGV[0], ARGV[1])
+else
+  puts "Usage: crawl SOURCE_DIR TARGET_DIR"
+  exit 1
+end
