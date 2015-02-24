@@ -5,6 +5,7 @@ require 'pathname'
 require 'rubygems'
 require 'bundler/setup'
 require 'sqlite3'
+require 'rb-inotify'
 
 class Index
   def initialize(path)
@@ -51,19 +52,37 @@ class Index
   end
 end
 
+def process_file(index, source, target_dir)
+  id = index.get(source)
+  target = target_dir + "#{id.to_s.rjust(8, '0')}.jpg"
+  unless target.exist?
+    puts "File `#{source}' found"
+    target.make_symlink(source)
+  else
+    putc '.'
+  end
+end
+
+
 def crawl(source_dir, target_dir)
   source_dir = Pathname.new(source_dir)
   target_dir = Pathname.new(target_dir)
   target_dir.mkpath
 
   Index.open(target_dir + 'index.sqlite3') do |index|
+    notifier = INotify::Notifier.new
+    notifier.watch(source_dir.to_s, :moved_to, :create, :recursive) do |event|
+      process_file(index, Pathname.new(event.absolute_name), target_dir)
+    end
+
     queue = [source_dir]
     visited = []
     while source_dir = queue.pop
-      puts "Crawling `#{source_dir}'"
+      puts "Scanning `#{source_dir}':"
       source_dir.each_child do |source|
-        next if source.symlink?
-        if source.directory? and source.basename.to_s !~ /\A\./
+        if source.symlink?
+          next
+        elsif source.directory? and source.basename.to_s !~ /\A\./
           stat = source.stat
           node = [stat.dev, stat.ino]
           unless visited.include?(node)
@@ -72,19 +91,14 @@ def crawl(source_dir, target_dir)
             queue << source
           end
         elsif source.file? and source.extname.downcase == '.jpg'
-          id = index.get(source)
-          target = target_dir + "#{id.to_s.rjust(8, '0')}.jpg"
-          unless target.exist?
-            puts "File `#{source}' found"
-            target.make_symlink(source)
-          else
-            putc '.'
-          end
+          process_file(index, source, target_dir)
         end
       end
     end
-  end
 
+    puts "Listening inotify events:"
+    notifier.run
+  end
 end
 
 if ARGV.length >= 2
