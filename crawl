@@ -56,10 +56,10 @@ def process_file(index, source, target_dir)
   id = index.get(source)
   target = target_dir + "#{id.to_s.rjust(8, '0')}.jpg"
   unless target.exist?
-    puts "File `#{source}' found"
+    STDERR.puts "File `#{source}' found"
     target.make_symlink(source)
   else
-    putc '.'
+    STDERR.putc '.'
   end
 end
 
@@ -78,7 +78,7 @@ def crawl(source_dir, target_dir)
     queue = [source_dir]
     visited = []
     while source_dir = queue.pop
-      puts "Scanning `#{source_dir}':"
+      STDERR.puts "Scanning `#{source_dir}':"
       source_dir.each_child do |source|
         if source.symlink?
           next
@@ -86,7 +86,7 @@ def crawl(source_dir, target_dir)
           stat = source.stat
           node = [stat.dev, stat.ino]
           unless visited.include?(node)
-            puts "Directory `#{source}' found"
+            STDERR.puts "Directory `#{source}' found"
             visited << node
             queue << source
           end
@@ -96,7 +96,7 @@ def crawl(source_dir, target_dir)
       end
     end
 
-    puts "Listening inotify events:"
+    STDERR.puts "Listening inotify events:"
     notifier.run
   end
 end
